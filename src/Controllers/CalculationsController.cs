@@ -5,9 +5,9 @@ using System.Threading.Tasks;
 using AutoMapper;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Microsoft.Azure.Function.Extensions;
 using Entities;
 using Contracts;
-//using Services;
 using Models.Domain;
 using Data;
 using Extensions;
@@ -16,12 +16,13 @@ namespace Controllers
 {
     [ApiController]
     [Route("[controller]")]
+
     public class CalculationsController : ControllerBase
     {
         private readonly ILogger<CalculationsController> _logger;
         private readonly ICalculationRepository _calculationRepository;
         private readonly ICalculator _calculator;
-        private readonly CalculatorDbContext _dbContext;
+        private readonly TransientDataContext _dbContext;
         private readonly IMapper _mapper;
 
         public CalculationsController(
@@ -35,12 +36,13 @@ namespace Controllers
         }
 
         /// <summary>
-        /// Display calculation history 
+        /// Azure Function to Display calculation history
         /// </summary>
         /// <returns>Calculation history</returns>
         [Authorize]
-        [HttpGet("history")]
-        public ActionResult<IEnumerable<CalculationModel>> History()
+        [FunctionName("History")]
+        public async Task<IEnumerable<CalculationModel>> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = null)])
          {
              _logger.LogInformation("History calculations API call.");
             if (!_calculationRepository.GetAll().Result.Any())
@@ -55,12 +57,13 @@ namespace Controllers
         }
 
         /// <summary>
-        /// Query to get calculation by id number
+        /// Azure Function to get calculation by id number
         /// </summary>
         /// <param name="id">calculation number</param>
         /// <returns></returns>
-        [HttpGet("{id}")]
-        public async Task<ActionResult<CalculationModel>> GetById(int? id)
+        [FunctionName("GetById")]
+        public async Task<IEnumerable<CalculationModel>> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "{id}")], int? id)
         {
             _logger.LogInformation($"Get {id} calculation API call.");
 
@@ -81,13 +84,14 @@ namespace Controllers
         }
         
         /// <summary>
-        /// Query to search calculations on history
+        /// Azure Function to search calculations on history
         /// </summary>
         /// <param name="predicate"></param>
-        /// <returns></returns>
+        /// <returns></returns>       
         [Authorize]
-        [HttpGet("search/{predicate}")]
-        public ActionResult<IEnumerable<CalculationModel>> FindByPredicate(string predicate)
+        [FunctionName("FindByPredicate")]
+        async Task<IActionResult<IEnumerable<CalculationModel>>> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "search/{predicate}")], string predicate)
         {
             _logger.LogInformation($"Attempt to find calculations by {predicate}.");
             var calculations = _calculationRepository
@@ -106,13 +110,14 @@ namespace Controllers
         }
 
         /// <summary>
-        /// Query to create calculation
+        /// Azure Function to create calculation
         /// </summary>
         /// <param name="calculationModel">Calculation dto model</param>
         /// <param name="expression"></param>
         /// <returns>Created at action response - success and Unprocessable entity - model errors</returns>
-        [HttpPost]
-        public async Task<IActionResult> Create([FromBody] CalculationModel calculationModel, string expression)
+        [FunctionName("Create")]
+        async Task<IActionResult> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = null)], [FromBody] CalculationModel calculationModel, string expression)
         {
             _logger.LogInformation($"Create {calculationModel} calculation API call.");
 
@@ -135,13 +140,14 @@ namespace Controllers
         }
 
         /// <summary>
-        /// Query to update calculation
+        /// Azure Function to update calculation
         /// </summary>
         /// <param name="id">Calculation number</param>
-        /// <param name="calculationModel">Calculation dto model</param>
+        /// <param name="calculationModel"</param>
         /// <returns>Ok response - success and Bad request - invalid request</returns>
-        [HttpPut("{id}")]
-        public async Task<IActionResult> Update(int id, CalculationModel calculationModel)
+        [FunctionName("Update")]
+        async Task<IActionResult> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "put", Route = "{id}")], [FromBody] CalculationModel calculationModel, string expression)
         {
             _logger.LogInformation($"Attempt to UPDATE {id} calculation API call.");
             if (id != calculationModel.Id)
@@ -163,12 +169,14 @@ namespace Controllers
         }
 
         /// <summary>
-        /// Query to update calculation
+        /// Azure Function to update calculation
         /// </summary>
         /// <param name="id">Calculation number</param>
         /// <returns>No content response - success and Bad request - invalid request or Not found - current calculation doesn't exist</returns>
         [HttpDelete("{id}")]
-        public async Task<IActionResult> Delete(int? id)
+        [FunctionName("Delete")]
+        async Task<IActionResult> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "delete", Route = "{id}")], int? id)
         {
             _logger.LogInformation($"Attempt to DELETE {id} calculation API call.");
 
