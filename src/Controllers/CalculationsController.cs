@@ -4,8 +4,9 @@ using System.Linq;
 using System.Threading.Tasks;
 using AutoMapper;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
-using Microsoft.Azure.Function.Extensions;
+using Microsoft.Azure.Functions.Worker;
 using Entities;
 using Contracts;
 using Models.Domain;
@@ -20,16 +21,16 @@ namespace Controllers
     public class CalculationsController : ControllerBase
     {
         private readonly ILogger<CalculationsController> _logger;
-        private readonly ICalculationRepository _calculationRepository;
+        private readonly ICalculationInMemoryRepository _calculationInMemoryRepository;
         private readonly ICalculator _calculator;
         private readonly TransientDataContext _dbContext;
         private readonly IMapper _mapper;
 
         public CalculationsController(
-            ILogger<CalculationsController> logger, ICalculationRepository calculationRepository, ICalculator calculator, IMapper mapper, CalculatorDbContext dbContext)
+            ILogger<CalculationsController> logger, ICalculationInMemoryRepository calculationInMemoryRepository, ICalculator calculator, IMapper mapper, TransientDataContext dbContext)
         {
             _logger = logger;
-            _calculationRepository = calculationRepository;
+            _calculationInMemoryRepository = calculationInMemoryRepository;
             _calculator = calculator;
             _mapper = mapper;
             _dbContext = dbContext;
@@ -40,20 +41,22 @@ namespace Controllers
         /// </summary>
         /// <returns>Calculation history</returns>
         [Authorize]
-        [FunctionName("History")]
+        [Function("History")]
         public async Task<IEnumerable<CalculationModel>> Run(
         [HttpTrigger(AuthorizationLevel.Function, "get", Route = null)])
-         {
+        {
              _logger.LogInformation("History calculations API call.");
-            if (!_calculationRepository.GetAll().Result.Any())
+            if (!_calculationInMemoryRepository.GetAll().Result.Any())
             {
                 _logger.LogWarning("History is empty.");
                 return NotFound();
             }
 
-            return _calculationRepository.GetAll().Result
+            var calculation = await _calculationInMemoryRepository.GetAll().Result
                 .Select(calculation => _mapper.Map<Calculation, CalculationModel>(calculation))
                 .ToList();
+
+            return calculation;
         }
 
         /// <summary>
@@ -61,9 +64,9 @@ namespace Controllers
         /// </summary>
         /// <param name="id">calculation number</param>
         /// <returns></returns>
-        [FunctionName("GetById")]
-        public async Task<IEnumerable<CalculationModel>> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "{id}")], int? id)
+        [Function("GetById")]
+        public async Task<ActionResult<CalculationModel>> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "{id}")] int? id)
         {
             _logger.LogInformation($"Get {id} calculation API call.");
 
@@ -73,7 +76,7 @@ namespace Controllers
                 return BadRequest();
             }
 
-            var calculation = await _calculationRepository.FindByIdAsync(id.Value);
+            var calculation = await _calculationInMemoryRepository.FindByIdAsync(id.Value);
             if (calculation is null)
             {
                 _logger.LogWarning($"Calculation with {id} doesn't exist.");
@@ -89,12 +92,12 @@ namespace Controllers
         /// <param name="predicate"></param>
         /// <returns></returns>       
         [Authorize]
-        [FunctionName("FindByPredicate")]
-        async Task<IActionResult<IEnumerable<CalculationModel>>> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "search/{predicate}")], string predicate)
+        [Function("FindByPredicate")]
+        async Task<ActionResult<IEnumerable<CalculationModel>>> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "get", Route = "search/{predicate}")] string predicate)
         {
             _logger.LogInformation($"Attempt to find calculations by {predicate}.");
-            var calculations = _calculationRepository
+            var calculations = _calculationInMemoryRepository
                 .FindByHistory(c => c.Type.Contains(predicate) || c.Id.ToString().Contains(predicate)
                                     || c.Expression.Contains(predicate) || c.CreateDate.ToString().Contains(predicate)).Result
                 .Select(calc => _mapper.Map<Calculation, CalculationModel>(calc))
@@ -115,9 +118,9 @@ namespace Controllers
         /// <param name="calculationModel">Calculation dto model</param>
         /// <param name="expression"></param>
         /// <returns>Created at action response - success and Unprocessable entity - model errors</returns>
-        [FunctionName("Create")]
+        [Function("Create")]
         async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "post", Route = null)], [FromBody] CalculationModel calculationModel, string expression)
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = null)] [FromBody] CalculationModel calculationModel, string expression)
         {
             _logger.LogInformation($"Create {calculationModel} calculation API call.");
 
@@ -135,8 +138,8 @@ namespace Controllers
                 return UnprocessableEntity();
             }
 
-            await _calculationRepository.CreateAsync(_mapper.Map<Calculation>(calculationModel));
-            return CreatedAtAction(nameof(GetById), new {id = calculationModel.Id}, calculationModel);
+            await _calculationInMemoryRepository.CreateAsync(_mapper.Map<Calculation>(calculationModel));
+            return CreatedAtAction(nameof(CalculationsController._calculator), new {id = calculationModel.Id}, calculationModel);
         }
 
         /// <summary>
@@ -145,9 +148,9 @@ namespace Controllers
         /// <param name="id">Calculation number</param>
         /// <param name="calculationModel"</param>
         /// <returns>Ok response - success and Bad request - invalid request</returns>
-        [FunctionName("Update")]
+        [Function("Update")]
         async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "put", Route = "{id}")], [FromBody] CalculationModel calculationModel, string expression)
+        [HttpTrigger(AuthorizationLevel.Function, "put", Route = "{id}")] int id, CalculationModel calculationModel)
         {
             _logger.LogInformation($"Attempt to UPDATE {id} calculation API call.");
             if (id != calculationModel.Id)
@@ -163,7 +166,7 @@ namespace Controllers
                 return UnprocessableEntity();
             }
 
-            await _calculationRepository.UpdateAsync(_mapper.Map<Calculation>(calculationModel));
+            await _calculationInMemoryRepository.UpdateAsync(_mapper.Map<Calculation>(calculationModel));
 
             return Ok(calculationModel);
         }
@@ -173,10 +176,9 @@ namespace Controllers
         /// </summary>
         /// <param name="id">Calculation number</param>
         /// <returns>No content response - success and Bad request - invalid request or Not found - current calculation doesn't exist</returns>
-        [HttpDelete("{id}")]
-        [FunctionName("Delete")]
+        [Function("Delete")]
         async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "delete", Route = "{id}")], int? id)
+        [HttpTrigger(AuthorizationLevel.Function, "delete", Route = "{id}")] int? id)
         {
             _logger.LogInformation($"Attempt to DELETE {id} calculation API call.");
 
@@ -186,13 +188,13 @@ namespace Controllers
                 return BadRequest();
             }
             
-            var calculation = await _calculationRepository.FindByIdAsync(id.Value);
+            var calculation = await _calculationInMemoryRepository.FindByIdAsync(id.Value);
             if (calculation is null)
             {
                 _logger.LogWarning($"Calculation with {id} doesn't exist");
                 return NotFound();
             }
-            await _calculationRepository.DeleteAsync(_mapper.Map<Calculation>(calculation).Id);
+            await _calculationInMemoryRepository.DeleteAsync(_mapper.Map<Calculation>(calculation).Id);
 
             return NoContent();
         }
