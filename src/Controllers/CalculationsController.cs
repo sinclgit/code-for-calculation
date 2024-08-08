@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Extensions.Http;
+using Microsoft.Azure.Functions.Worker.Extensions;
 using Entities;
 using Contracts;
 using Models.Domain;
@@ -42,8 +44,8 @@ namespace Controllers
         /// <returns>Calculation history</returns>
         [Authorize]
         [Function("History")]
-        public async Task<IEnumerable<CalculationModel>> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "get", Route = null)])
+        public async Task<ActionResult<IEnumerable<CalculationModel>>> Run(
+        [HttpTrigger(AuthorizationLevel.Admin, "get", Route = null)] HttpTriggerAttribute httpTrigger)
         {
              _logger.LogInformation("History calculations API call.");
             if (!_calculationInMemoryRepository.GetAll().Result.Any())
@@ -52,11 +54,13 @@ namespace Controllers
                 return NotFound();
             }
 
-            var calculation = await _calculationInMemoryRepository.GetAll().Result
+            // var calculation = await _calculationInMemoryRepository.GetAll().Result
+            //     .Select(calculation => _mapper.Map<Calculation, CalculationModel>(calculation))
+            //     .ToList();
+
+            return _calculationInMemoryRepository.GetAll().Result
                 .Select(calculation => _mapper.Map<Calculation, CalculationModel>(calculation))
                 .ToList();
-
-            return calculation;
         }
 
         /// <summary>
@@ -178,17 +182,17 @@ namespace Controllers
         /// <returns>No content response - success and Bad request - invalid request or Not found - current calculation doesn't exist</returns>
         [Function("Delete")]
         async Task<IActionResult> Run(
-        [HttpTrigger(AuthorizationLevel.Function, "delete", Route = "{id}")] int? id)
+        [HttpTrigger(AuthorizationLevel.Function, "delete", Route = "{id}")] int id)
         {
             _logger.LogInformation($"Attempt to DELETE {id} calculation API call.");
 
-            if (!id.HasValue)
-            {
-                _logger.LogError("Missing id parameter");
-                return BadRequest();
-            }
+            // if (!id)
+            // {
+            //     _logger.LogError("Missing id parameter");
+            //     return BadRequest();
+            // }
             
-            var calculation = await _calculationInMemoryRepository.FindByIdAsync(id.Value);
+            var calculation = await _calculationInMemoryRepository.FindByIdAsync(id);
             if (calculation is null)
             {
                 _logger.LogWarning($"Calculation with {id} doesn't exist");
